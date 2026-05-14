@@ -1,77 +1,112 @@
-name: personal-ai-local
+name: personal-ai
+
+x-n8n-common: &n8n-common
+  image: n8nio/n8n:2.19.5
+  restart: unless-stopped
+  environment: &n8n-env
+    N8N_HOST: ${N8N_HOST:-localhost}
+    N8N_PORT: 5678
+    N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+    N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:5678}
+    N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-false}
+    # Project-level env mapped to n8n's native WEBHOOK_URL setting.
+    WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
+    N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY is required}
+    GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Asia/Qyzylorda}
+    TZ: ${TZ:-Asia/Qyzylorda}
+    N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+    N8N_DIAGNOSTICS_ENABLED: "false"
+    N8N_PERSONALIZATION_ENABLED: "false"
+    N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+    N8N_TEMPLATES_ENABLED: "false"
+    N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+    # Minimal production queue-mode setup: one main instance + one worker.
+    N8N_RUNNERS_ENABLED: ${N8N_RUNNERS_ENABLED:-true}
+    N8N_RUNNERS_MODE: ${N8N_RUNNERS_MODE:-internal}
+    EXECUTIONS_MODE: ${EXECUTIONS_MODE:-queue}
+    OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: ${OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS:-true}
+    QUEUE_BULL_PREFIX: ${QUEUE_BULL_PREFIX:-n8n}
+    QUEUE_BULL_REDIS_HOST: redis
+    QUEUE_BULL_REDIS_PORT: 6379
+    QUEUE_BULL_REDIS_PASSWORD: ${REDIS_PASSWORD:-change_me_redis_password}
+    QUEUE_HEALTH_CHECK_ACTIVE: "true"
+    # Convenience env for workflows/scripts; n8n itself uses the QUEUE_BULL_* vars above.
+    REDIS_URL: redis://:${REDIS_PASSWORD:-change_me_redis_password}@redis:6379/0
+    DB_TYPE: postgresdb
+    DB_POSTGRESDB_HOST: ${POSTGRES_HOST:-postgres}
+    DB_POSTGRESDB_PORT: 5432
+    DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-personal_ai_assistant}
+    DB_POSTGRESDB_USER: ${POSTGRES_USER:-assistant_user}
+    DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    # Brief DB restarts should not make n8n fail permanently on boot.
+    DB_POSTGRESDB_CONNECTION_TIMEOUT: "60000"
+    DB_POSTGRESDB_POOL_SIZE: "5"
+    OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+    TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
+    SEARCH_PROVIDER: ${SEARCH_PROVIDER:-tavily}
+    SEARCH_API_KEY: ${SEARCH_API_KEY:-}
+    TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    DEFAULT_USER_CITY: ${DEFAULT_USER_CITY:-Pavlodar}
+    DEFAULT_USER_COUNTRY: ${DEFAULT_USER_COUNTRY:-Kazakhstan}
+    OPENAI_ROUTER_MODEL: ${OPENAI_ROUTER_MODEL:-gpt-5.4-mini}
+    OPENAI_ANALYSIS_MODEL: ${OPENAI_ANALYSIS_MODEL:-gpt-5.4-mini}
+    OPENAI_SYNTHESIZER_MODEL: ${OPENAI_SYNTHESIZER_MODEL:-gpt-5.4-mini}
+    OPENAI_TRANSCRIBE_MODEL: ${OPENAI_TRANSCRIBE_MODEL:-gpt-4o-mini-transcribe}
+  volumes:
+    - n8n_data:/home/node/.n8n
+  networks:
+    - assistant_net
 
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      TZ: ${TZ}
-    ports:
-      - "${POSTGRES_PORT}:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-personal_ai_assistant}
+      POSTGRES_USER: ${POSTGRES_USER:-assistant_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      TZ: ${TZ:-Asia/Qyzylorda}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-assistant_user} -d ${POSTGRES_DB:-personal_ai_assistant}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - assistant_net
 
-  n8n:
-    image: n8nio/n8n:2.19.5
+  redis:
+    image: redis:7-alpine
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change_me_redis_password}
+      TZ: ${TZ:-Asia/Qyzylorda}
+    command:
+      - sh
+      - -c
+      - redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - assistant_net
+
+  n8n:
+    <<: *n8n-common
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "${N8N_PORT}:5678"
-    environment:
-      N8N_HOST: ${N8N_HOST}
-      N8N_PORT: 5678
-      N8N_PROTOCOL: ${N8N_PROTOCOL}
-      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL}
-      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE}
-      WEBHOOK_URL: ${WEBHOOK_URL}
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
-      TZ: ${TZ}
-      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      N8N_DIAGNOSTICS_ENABLED: "false"
-      N8N_PERSONALIZATION_ENABLED: "false"
-      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
-      N8N_TEMPLATES_ENABLED: "false"
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
-
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
-      # Slow laptops / Docker restarts: avoid false "Database is not ready" during brief Postgres unavailability
-      DB_POSTGRESDB_CONNECTION_TIMEOUT: "60000"
-      DB_POSTGRESDB_POOL_SIZE: "5"
-
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS}
-      SEARCH_PROVIDER: ${SEARCH_PROVIDER}
-      SEARCH_API_KEY: ${SEARCH_API_KEY}
-      TAVILY_API_KEY: ${TAVILY_API_KEY}
-      # Optional: override local search defaults for n8n Code nodes (else workflow uses SQL/Code fallbacks).
-      DEFAULT_USER_CITY: ${DEFAULT_USER_CITY}
-      DEFAULT_USER_COUNTRY: ${DEFAULT_USER_COUNTRY}
-      OPENAI_ROUTER_MODEL: ${OPENAI_ROUTER_MODEL}
-      OPENAI_ANALYSIS_MODEL: ${OPENAI_ANALYSIS_MODEL}
-      OPENAI_SYNTHESIZER_MODEL: ${OPENAI_SYNTHESIZER_MODEL}
-      OPENAI_TRANSCRIBE_MODEL: ${OPENAI_TRANSCRIBE_MODEL}
-    volumes:
-      - n8n_data:/home/node/.n8n
+      redis:
+        condition: service_healthy
+    # In Coolify, map a domain to this service and point it at container port 5678.
     healthcheck:
       test:
         [
@@ -82,13 +117,32 @@ services:
       timeout: 10s
       retries: 10
       start_period: 90s
-    networks:
-      - assistant_net
+
+  n8n-worker:
+    <<: *n8n-common
+    command: worker --concurrency=${N8N_WORKER_CONCURRENCY:-5}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      n8n:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:5678/healthz/readiness').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
 
 volumes:
   postgres_data:
+  redis_data:
   n8n_data:
 
 networks:
   assistant_net:
-    name: personal-ai-local-net

@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-Write-Host "Starting local n8n + PostgreSQL..."
+Write-Host "Starting local n8n + worker + PostgreSQL + Redis..."
 docker compose up -d
 
 Write-Host ""
@@ -9,4 +9,3 @@ docker compose ps
 
 Write-Host ""
 Write-Host "n8n should be available at: http://localhost:5678"
-
