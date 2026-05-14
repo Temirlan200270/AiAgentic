@@ -1,0 +1,54 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# n8n local data and exports
+.n8n/
+n8n_data/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local workflow/debug exports
+exports/
+backups/
+tmp/
+temp/
+logs/
+*.log
+
+# Node / package managers, in case helper scripts are added later
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Python, in case local tooling is added later
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# Cursor MCP (keep keys local)
+.cursor/mcp.json
+
+# Local Codex project notes
+CODEX.md

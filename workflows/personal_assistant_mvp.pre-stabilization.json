@@ -1,0 +1,1025 @@
+{
+  "name": "Personal AI Assistant MVP",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "custom",
+              "cronExpression": "*/10 * * * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron",
+      "name": "Telegram Poll Every 10 Seconds",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "query": "SELECT last_update_id FROM telegram_poll_state WHERE id = 1;",
+        "operation": "executeQuery",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "id": "load_poll_state",
+      "name": "Load Telegram Poll State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.telegram.org/bot' + $env.TELEGRAM_BOT_TOKEN + '/getUpdates' }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ Number($json.last_update_id || 0) + 1 }}",
+              "name": "offset"
+            },
+            {
+              "value": "0",
+              "name": "timeout"
+            }
+          ]
+        }
+      },
+      "id": "telegram_get_updates",
+      "name": "Telegram getUpdates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const updates = $json.result || [];\nconst items = [];\n\nfunction getAllowedIds() {\n  let raw = '';\n  try {\n    raw = $env.TELEGRAM_ALLOWED_USER_IDS || '';\n  } catch (error) {\n    raw = '';\n  }\n  return String(raw)\n    .split(',')\n    .map((id) => id.trim())\n    .filter(Boolean);\n}\n\nconst allowedIds = getAllowedIds();\n\nfor (const update of updates) {\n  const message = update.message;\n  if (!message || typeof message.text !== 'string') continue;\n\n  const userId = message.from?.id;\n  const isAllowed = allowedIds.length === 0 || allowedIds.includes(String(userId));\n\n  items.push({\n    json: {\n      telegram_update_id: update.update_id,\n      user_id: userId,\n      chat_id: message.chat?.id,\n      message_id: message.message_id,\n      user_message: message.text,\n      message_kind: 'text',\n      received_at: message.date ? new Date(message.date * 1000).toISOString() : new Date().toISOString(),\n      is_allowed: isAllowed\n    }\n  });\n}\n\nreturn items;",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "normalize_text_updates",
+      "name": "Normalize Text Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const updates = $json.result || [];\nconst items = [];\n\nfunction getAllowedIds() {\n  let raw = '';\n  try {\n    raw = $env.TELEGRAM_ALLOWED_USER_IDS || '';\n  } catch (error) {\n    raw = '';\n  }\n  return String(raw)\n    .split(',')\n    .map((id) => id.trim())\n    .filter(Boolean);\n}\n\nconst allowedIds = getAllowedIds();\n\nfor (const update of updates) {\n  const message = update.message;\n  if (!message || !message.voice?.file_id) continue;\n\n  const userId = message.from?.id;\n  const isAllowed = allowedIds.length === 0 || allowedIds.includes(String(userId));\n\n  items.push({\n    json: {\n      telegram_update_id: update.update_id,\n      user_id: userId,\n      chat_id: message.chat?.id,\n      message_id: message.message_id,\n      voice_file_id: message.voice.file_id,\n      voice_duration: message.voice.duration,\n      message_kind: 'voice',\n      received_at: message.date ? new Date(message.date * 1000).toISOString() : new Date().toISOString(),\n      is_allowed: isAllowed\n    }\n  });\n}\n\nreturn items;",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "normalize_voice_updates",
+      "name": "Normalize Voice Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.telegram.org/bot' + $env.TELEGRAM_BOT_TOKEN + '/getFile' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "file_id",
+              "value": "={{ $json.voice_file_id }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "telegram_voice_get_file",
+      "name": "Telegram Voice getFile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1040,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.telegram.org/file/bot' + $env.TELEGRAM_BOT_TOKEN + '/' + $json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "download_telegram_voice",
+      "name": "Download Telegram Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1300,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  if (item.binary?.data) {\n    item.binary.data.fileName = 'telegram-voice.ogg';\n    item.binary.data.fileExtension = 'ogg';\n    item.binary.data.mimeType = 'audio/ogg';\n  }\n  return item;\n});",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "prepare_voice_file_for_openai",
+      "name": "Prepare Voice File for OpenAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1430,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.OPENAI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formData",
+              "name": "model",
+              "value": "={{ $env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe' }}"
+            },
+            {
+              "parameterType": "formData",
+              "name": "language",
+              "value": "ru"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "openai_transcribe_voice",
+      "name": "OpenAI Transcribe Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1690,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const bases = $items(\"Normalize Voice Updates\").map((item) => item.json);\nreturn items.map((item, index) => {\n  const base = bases[index] || {};\n  const text = String(item.json.text || '').trim();\n  const error = item.json.error || item.json.message || null;\n  return {\n    json: {\n      ...base,\n      user_message: text || '[voice transcription failed] Please repeat the voice message or send text.',\n      transcription_error: text ? null : (error ? JSON.stringify(error) : 'empty_transcription'),\n    },\n  };\n});",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "normalize_voice_transcription",
+      "name": "Normalize Voice Transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1950,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "query": "WITH upd AS (\n  UPDATE telegram_poll_state\n  SET last_update_id = GREATEST(last_update_id, {{ $json.telegram_update_id }}),\n      updated_at = NOW()\n  WHERE id = 1\n  RETURNING 1\n)\nSELECT\n  {{ $json.telegram_update_id }}::BIGINT AS telegram_update_id,\n  {{ $json.user_id }}::BIGINT AS user_id,\n  {{ $json.chat_id }}::BIGINT AS chat_id,\n  {{ $json.message_id }}::BIGINT AS message_id,\n  '{{ $json.user_message.replace(/'/g, \"''\") }}'::TEXT AS user_message,\n  '{{ $json.received_at }}'::TIMESTAMPTZ AS received_at,\n  {{ $json.is_allowed === false ? 'false' : 'true' }}::BOOLEAN AS is_allowed,\n  '{{ ($json.message_kind || \"text\").replace(/'/g, \"''\") }}'::TEXT AS message_kind,\n  NULLIF('{{ ($json.transcription_error || \"\").replace(/'/g, \"''\") }}', '')::TEXT AS transcription_error;",
+        "operation": "executeQuery",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "id": "save_poll_state",
+      "name": "Save Telegram Poll State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1040,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items\n  .filter(item => item.json.is_allowed !== false)\n  .map(item => ({ json: item.json }));",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "gate_allowed_users",
+      "name": "Gate Allowed Users",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "query": "SELECT\n  {{ $json.telegram_update_id }}::BIGINT AS telegram_update_id,\n  {{ $json.user_id }}::BIGINT AS user_id,\n  {{ $json.chat_id }}::BIGINT AS chat_id,\n  {{ $json.message_id }}::BIGINT AS message_id,\n  '{{ $json.user_message.replace(/'/g, \"''\") }}'::TEXT AS user_message,\n  '{{ $json.received_at }}'::TIMESTAMPTZ AS received_at,\n  COALESCE(\n    (\n      SELECT json_agg(row_to_json(m))\n      FROM (\n        SELECT role, content, created_at\n        FROM (\n          SELECT role, content, created_at\n          FROM chat_memory\n          WHERE user_id = {{ $json.user_id }}\n          ORDER BY created_at DESC\n          LIMIT 5\n        ) recent\n        ORDER BY created_at ASC\n      ) m\n    ),\n    '[]'::json\n  ) AS memory;",
+        "operation": "executeQuery",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "id": "load_memory",
+      "name": "Load Memory",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1300,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "specifyHeaders": "keypair",
+        "contentType": "json",
+        "method": "POST",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={{ { model: $env.OPENAI_ROUTER_MODEL || 'gpt-5.4-mini', messages: [ { role: 'system', content: \"You are the router for a personal AI assistant.\\nReturn only valid JSON. Do not use Markdown.\\nAvailable routes: finance_add, finance_report, search, reminder_add, chat.\\nIf unsure, choose chat.\\nResponse format:\\n{\\n  \\\"route\\\": \\\"chat\\\",\\n  \\\"confidence\\\": 0.8,\\n  \\\"extracted_data\\\": {}\\n}\\nExtract these fields when useful: amount, transaction_type, category, description, report_period, search_query, task_text, remind_at, timezone.\\nDefault timezone: Asia/Qyzylorda. Default currency: KZT.\\nUser messages can be in Russian. Keep extracted text in the user\\u0027s language when useful.\" }, { role: 'user', content: 'Chat memory:\\n' + JSON.stringify($json.memory || []) + '\\n\\nUser message:\\n' + $json.user_message } ], response_format: { type: 'json_object' }, max_completion_tokens: 700 } }}",
+        "headerParameters": {
+          "parameters": [
+            {
+              "value": "={{ 'Bearer ' + $env.OPENAI_API_KEY }}",
+              "name": "Authorization"
+            },
+            {
+              "value": "application/json",
+              "name": "Content-Type"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ai_router",
+      "name": "AI Router",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const mem = $items(\"Load Memory\");\nconst base = (mem && mem[0] && mem[0].json) ? mem[0].json : {};\nconst choice = $json.choices && $json.choices[0];\nconst raw = (choice && choice.message && choice.message.content) ? choice.message.content : \"{}\";\nlet parsed;\ntry {\n  parsed = JSON.parse(raw);\n} catch (error) {\n  parsed = { route: \"chat\", confidence: 0, extracted_data: {}, parse_error: raw };\n}\nif (![\"finance_add\", \"finance_report\", \"search\", \"reminder_add\", \"chat\"].includes(parsed.route)) {\n  parsed.route = \"chat\";\n}\nreturn [{ json: { ...base, route: parsed.route, confidence: parsed.confidence || 0, extracted_data: parsed.extracted_data || {} } }];",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "parse_router",
+      "name": "Parse Router JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items\n  .filter(item => item.json.route === \"chat\")\n  .map(item => ({ json: item.json }));",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "gate_chat",
+      "name": "Gate Chat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items\n  .filter(item => item.json.route === \"search\")\n  .map(item => ({ json: item.json }));",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "gate_search",
+      "name": "Gate Search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items\n  .filter(item => item.json.route === \"finance_add\")\n  .map(item => ({ json: item.json }));",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "gate_finance_add",
+      "name": "Gate Finance Add",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items\n  .filter(item => item.json.route === \"finance_report\")\n  .map(item => ({ json: item.json }));",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "gate_finance_report",
+      "name": "Gate Finance Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items\n  .filter(item => item.json.route === \"reminder_add\")\n  .map(item => ({ json: item.json }));",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "gate_reminder_add",
+      "name": "Gate Reminder Add",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => ({ json: { ...item.json, tool_data: { type: \"chat\" } } }));",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "tool_chat",
+      "name": "Tool Data Chat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.tavily.com/search",
+        "specifyHeaders": "keypair",
+        "contentType": "json",
+        "method": "POST",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={{ { api_key: $env.TAVILY_API_KEY || $env.SEARCH_API_KEY, query: $json.extracted_data.search_query || $json.user_message, max_results: 5 } }}",
+        "headerParameters": {
+          "parameters": [
+            {
+              "value": "application/json",
+              "name": "Content-Type"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "tavily_search",
+      "name": "Tavily Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2340,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let base = {};\ntry {\n  const g = $items(\"Gate Search\");\n  if (g && g[0] && g[0].json) {\n    base = g[0].json;\n  }\n} catch (error) {\n  base = {};\n}\nreturn [{ json: { ...base, tool_data: { type: \"search\", results: $json.results || [], answer: $json.answer || null } } }];",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "tool_search",
+      "name": "Tool Data Search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "query": "INSERT INTO finance_log (user_id, chat_id, transaction_type, amount, currency, category, description, transaction_at, source_message_id)\nVALUES (\n  {{ $json.user_id }},\n  {{ $json.chat_id }},\n  COALESCE(NULLIF('{{ ($json.extracted_data.transaction_type || \"expense\").replace(/'/g, \"''\") }}', ''), 'expense'),\n  {{ Number($json.extracted_data.amount || 0) }},\n  COALESCE(NULLIF('{{ ($json.extracted_data.currency || \"KZT\").replace(/'/g, \"''\") }}', ''), 'KZT'),\n  NULLIF('{{ ($json.extracted_data.category || \"other\").replace(/'/g, \"''\") }}', ''),\n  NULLIF('{{ ($json.extracted_data.description || $json.user_message).replace(/'/g, \"''\") }}', ''),\n  COALESCE(NULLIF('{{ $json.extracted_data.transaction_at || \"\" }}', '')::TIMESTAMPTZ, NOW()),\n  {{ $json.message_id }}\n)\nRETURNING\n  {{ $json.telegram_update_id }}::BIGINT AS telegram_update_id,\n  {{ $json.user_id }}::BIGINT AS user_id,\n  {{ $json.chat_id }}::BIGINT AS chat_id,\n  {{ $json.message_id }}::BIGINT AS message_id,\n  '{{ $json.user_message.replace(/'/g, \"''\") }}'::TEXT AS user_message,\n  '{{ $json.route }}'::TEXT AS route,\n  '{{ JSON.stringify($json.extracted_data || {}).replace(/'/g, \"''\") }}'::JSON AS extracted_data,\n  '{{ JSON.stringify($json.memory || []).replace(/'/g, \"''\") }}'::JSON AS memory,\n  json_build_object('type', 'finance_add', 'saved', row_to_json(finance_log)) AS tool_data;",
+        "operation": "executeQuery",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "id": "finance_add",
+      "name": "Finance Add SQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2340,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "query": "WITH rows AS (\n  SELECT category, transaction_type, currency, SUM(amount) AS total_amount, COUNT(*) AS transaction_count\n  FROM finance_log\n  WHERE user_id = {{ $json.user_id }}\n    AND transaction_at >= COALESCE(NULLIF('{{ (($json.extracted_data || {}).report_period || {}).start || \"\" }}', '')::TIMESTAMPTZ, NOW() - INTERVAL '30 days')\n    AND transaction_at < COALESCE(NULLIF('{{ (($json.extracted_data || {}).report_period || {}).end || \"\" }}', '')::TIMESTAMPTZ, NOW() + INTERVAL '1 day')\n  GROUP BY category, transaction_type, currency\n)\nSELECT\n  {{ $json.telegram_update_id }}::BIGINT AS telegram_update_id,\n  {{ $json.user_id }}::BIGINT AS user_id,\n  {{ $json.chat_id }}::BIGINT AS chat_id,\n  {{ $json.message_id }}::BIGINT AS message_id,\n  '{{ $json.user_message.replace(/'/g, \"''\") }}'::TEXT AS user_message,\n  '{{ $json.route }}'::TEXT AS route,\n  '{{ JSON.stringify($json.extracted_data || {}).replace(/'/g, \"''\") }}'::JSON AS extracted_data,\n  '{{ JSON.stringify($json.memory || []).replace(/'/g, \"''\") }}'::JSON AS memory,\n  json_build_object('type', 'finance_report', 'rows', COALESCE(json_agg(row_to_json(rows)), '[]'::json)) AS tool_data\nFROM rows;",
+        "operation": "executeQuery",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "id": "finance_report",
+      "name": "Finance Report SQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2340,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "query": "INSERT INTO reminders (user_id, chat_id, task_text, remind_at, timezone, source_message_id)\nVALUES (\n  {{ $json.user_id }},\n  {{ $json.chat_id }},\n  '{{ ($json.extracted_data.task_text || $json.user_message).replace(/'/g, \"''\") }}',\n  COALESCE(NULLIF('{{ $json.extracted_data.remind_at || \"\" }}', '')::TIMESTAMPTZ, NOW() + INTERVAL '1 hour'),\n  COALESCE(NULLIF('{{ ($json.extracted_data.timezone || \"Asia/Qyzylorda\").replace(/'/g, \"''\") }}', ''), 'Asia/Qyzylorda'),\n  {{ $json.message_id }}\n)\nRETURNING\n  {{ $json.telegram_update_id }}::BIGINT AS telegram_update_id,\n  {{ $json.user_id }}::BIGINT AS user_id,\n  {{ $json.chat_id }}::BIGINT AS chat_id,\n  {{ $json.message_id }}::BIGINT AS message_id,\n  '{{ $json.user_message.replace(/'/g, \"''\") }}'::TEXT AS user_message,\n  '{{ $json.route }}'::TEXT AS route,\n  '{{ JSON.stringify($json.extracted_data || {}).replace(/'/g, \"''\") }}'::JSON AS extracted_data,\n  '{{ JSON.stringify($json.memory || []).replace(/'/g, \"''\") }}'::JSON AS memory,\n  json_build_object('type', 'reminder_add', 'saved', row_to_json(reminders)) AS tool_data;",
+        "operation": "executeQuery",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "id": "reminder_add",
+      "name": "Reminder Add SQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2340,
+        360
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "specifyHeaders": "keypair",
+        "contentType": "json",
+        "method": "POST",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={{ { model: $env.OPENAI_SYNTHESIZER_MODEL || 'gpt-5.4-mini', messages: [ { role: 'system', content: \"You are Asteron, a personal assistant in Telegram.\\n\\nAlways answer in Russian, but keep your style natural, warm, concise, and practical.\\nIf the user asks several things in one message, answer in short separate blocks.\\nDo not use Markdown asterisks. If emphasis is useful, use only Telegram HTML tags: <b>, <i>, <code>. Use formatting sparingly.\\nNever mention internal node names, JSON, n8n, router, tool_data, or implementation details.\\nIf an action was saved, confirm it with specific details.\\nFor reminders and dates, include a concrete date and time when available in the data.\\nIf the user asks for the current time, answer directly with the user's local time when available.\\nIf tool_data contains search or finance results, summarize them clearly.\\nDo not invent facts that are not present in memory or tool_data.\" }, { role: 'user', content: 'Memory:\\n' + JSON.stringify($json.memory || []) + '\\n\\nRoute: ' + $json.route + '\\nExtracted data:\\n' + JSON.stringify($json.extracted_data || {}) + '\\n\\nTool data:\\n' + JSON.stringify($json.tool_data || {}) + '\\n\\nUser message:\\n' + $json.user_message } ], max_completion_tokens: 900 } }}",
+        "headerParameters": {
+          "parameters": [
+            {
+              "value": "={{ 'Bearer ' + $env.OPENAI_API_KEY }}",
+              "name": "Authorization"
+            },
+            {
+              "value": "application/json",
+              "name": "Content-Type"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ai_synth",
+      "name": "AI Synthesizer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2940,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function branchItems(nodeName) {\n  try {\n    const rows = $items(nodeName);\n    return Array.isArray(rows) ? rows : [];\n  } catch (error) {\n    return [];\n  }\n}\nconst candidates = [\n  ...branchItems(\"Tool Data Chat\").map((i) => i.json),\n  ...branchItems(\"Tool Data Search\").map((i) => i.json),\n  ...branchItems(\"Finance Add SQL\").map((i) => i.json),\n  ...branchItems(\"Finance Report SQL\").map((i) => i.json),\n  ...branchItems(\"Reminder Add SQL\").map((i) => i.json),\n];\nconst base = candidates.find(Boolean) || {};\nconst choice = $json.choices && $json.choices[0];\nconst assistant_reply = (choice && choice.message && choice.message.content) ? choice.message.content : \"OK.\";\nreturn [{ json: { ...base, assistant_reply } }];",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "extract_reply",
+      "name": "Extract Assistant Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "specifyBody": "json",
+        "sendBody": true,
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "method": "POST",
+        "jsonBody": "={{ { chat_id: $json.chat_id, text: $json.assistant_reply, parse_mode: 'HTML' } }}",
+        "contentType": "json",
+        "url": "={{ 'https://api.telegram.org/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}"
+      },
+      "id": "telegram_send",
+      "name": "Telegram Send Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "query": "INSERT INTO chat_memory (user_id, chat_id, role, content, metadata)\nVALUES\n({{ $node[\"Extract Assistant Reply\"].json.user_id }}, {{ $node[\"Extract Assistant Reply\"].json.chat_id }}, 'user', '{{ $node[\"Extract Assistant Reply\"].json.user_message.replace(/'/g, \"''\") }}', json_build_object('message_id', {{ $node[\"Extract Assistant Reply\"].json.message_id }}, 'route', '{{ $node[\"Extract Assistant Reply\"].json.route }}')),\n({{ $node[\"Extract Assistant Reply\"].json.user_id }}, {{ $node[\"Extract Assistant Reply\"].json.chat_id }}, 'assistant', '{{ $node[\"Extract Assistant Reply\"].json.assistant_reply.replace(/'/g, \"''\") }}', json_build_object('route', '{{ $node[\"Extract Assistant Reply\"].json.route }}'))\nRETURNING id;",
+        "operation": "executeQuery",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "id": "save_memory",
+      "name": "Save Memory",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3720,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Poll Every 10 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Load Telegram Poll State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Telegram Poll State": {
+      "main": [
+        [
+          {
+            "node": "Telegram getUpdates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram getUpdates": {
+      "main": [
+        [
+          {
+            "node": "Normalize Text Updates",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Normalize Voice Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Telegram Poll State": {
+      "main": [
+        [
+          {
+            "node": "Gate Allowed Users",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Memory": {
+      "main": [
+        [
+          {
+            "node": "AI Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Router": {
+      "main": [
+        [
+          {
+            "node": "Parse Router JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Router JSON": {
+      "main": [
+        [
+          {
+            "node": "Gate Chat",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gate Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gate Finance Add",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gate Finance Report",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gate Reminder Add",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate Chat": {
+      "main": [
+        [
+          {
+            "node": "Tool Data Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate Search": {
+      "main": [
+        [
+          {
+            "node": "Tavily Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tavily Search": {
+      "main": [
+        [
+          {
+            "node": "Tool Data Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate Finance Add": {
+      "main": [
+        [
+          {
+            "node": "Finance Add SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate Finance Report": {
+      "main": [
+        [
+          {
+            "node": "Finance Report SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate Reminder Add": {
+      "main": [
+        [
+          {
+            "node": "Reminder Add SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool Data Chat": {
+      "main": [
+        [
+          {
+            "node": "AI Synthesizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool Data Search": {
+      "main": [
+        [
+          {
+            "node": "AI Synthesizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finance Add SQL": {
+      "main": [
+        [
+          {
+            "node": "AI Synthesizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finance Report SQL": {
+      "main": [
+        [
+          {
+            "node": "AI Synthesizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reminder Add SQL": {
+      "main": [
+        [
+          {
+            "node": "AI Synthesizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Synthesizer": {
+      "main": [
+        [
+          {
+            "node": "Extract Assistant Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Assistant Reply": {
+      "main": [
+        [
+          {
+            "node": "Telegram Send Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Send Message": {
+      "main": [
+        [
+          {
+            "node": "Save Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate Allowed Users": {
+      "main": [
+        [
+          {
+            "node": "Load Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Text Updates": {
+      "main": [
+        [
+          {
+            "node": "Save Telegram Poll State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Voice Updates": {
+      "main": [
+        [
+          {
+            "node": "Telegram Voice getFile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Voice getFile": {
+      "main": [
+        [
+          {
+            "node": "Download Telegram Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Telegram Voice": {
+      "main": [
+        [
+          {
+            "node": "Prepare Voice File for OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Transcribe Voice": {
+      "main": [
+        [
+          {
+            "node": "Normalize Voice Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Voice Transcription": {
+      "main": [
+        [
+          {
+            "node": "Save Telegram Poll State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Voice File for OpenAI": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Transcribe Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Qyzylorda"
+  }
+}

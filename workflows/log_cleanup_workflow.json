@@ -1,0 +1,65 @@
+{
+  "name": "Log Cleanup Cron",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "custom",
+              "cronExpression": "0 3 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "cleanup_cron",
+      "name": "Weekly Cleanup Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM llm_usage_log WHERE created_at < NOW() - INTERVAL '90 days';\nDELETE FROM execution_log WHERE created_at < NOW() - INTERVAL '90 days';\nDELETE FROM tool_execution_log WHERE created_at < NOW() - INTERVAL '90 days';\nDELETE FROM processed_telegram_updates WHERE processed_at < NOW() - INTERVAL '30 days';\nDELETE FROM unsent_telegram_messages WHERE created_at < NOW() - INTERVAL '30 days';",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "id": "execute_cleanup",
+      "name": "Execute Cleanup SQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Cleanup Cron": {
+      "main": [
+        [
+          {
+            "node": "Execute Cleanup SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Qyzylorda"
+  }
+}

@@ -1,0 +1,229 @@
+{
+  "name": "Reminder Delivery",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "custom",
+              "cronExpression": "0 */2 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "reminder_cron",
+      "name": "Reminder Delivery Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, user_id, chat_id, task_text, remind_at, timezone\nFROM reminders\nWHERE is_done = FALSE\n  AND remind_at <= NOW()\nORDER BY remind_at ASC\nLIMIT 50;",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "id": "load_due_reminders",
+      "name": "Load Due Reminders",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter out empty results (Postgres may return one item with no id).\n// Format the Telegram message text and pass reminder fields downstream.\nconst results = items.map(i => i.json);\nconst reminders = results.filter(r => r.id && r.chat_id);\n\nif (reminders.length === 0) {\n  return []; // Nothing due — stop the flow.\n}\n\nreturn reminders.map(r => {\n  const remindAtLocal = r.remind_at\n    ? new Date(r.remind_at).toLocaleString('ru-RU', { timeZone: r.timezone || 'Asia/Qyzylorda' })\n    : '';\n  const timeNote = remindAtLocal ? ` (${remindAtLocal})` : '';\n  return {\n    json: {\n      reminder_id: r.id,\n      user_id: r.user_id,\n      chat_id: r.chat_id,\n      task_text: r.task_text,\n      remind_at: r.remind_at,\n      timezone: r.timezone,\n      telegram_text: `🔔 <b>Напоминание</b>${timeNote}\\n${r.task_text}`\n    }\n  };\n});",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "filter_and_prepare",
+      "name": "Filter & Prepare Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "jsonBody": "={{ { chat_id: $json.chat_id, text: $json.telegram_text, parse_mode: 'HTML' } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "send_telegram_reminder",
+      "name": "Send Telegram Reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        780,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge Telegram API response with original reminder data.\n// $input.all() has the Telegram responses; $('Filter & Prepare Messages').all() has the reminders.\nconst sendResults = $input.all();\nconst reminders = $('Filter & Prepare Messages').all();\n\nreturn sendResults.map((item, i) => {\n  const send = item.json;\n  const reminder = (reminders[i] && reminders[i].json) ? reminders[i].json : {};\n  const success = send.ok === true;\n  return {\n    json: {\n      reminder_id: reminder.reminder_id,\n      user_id: reminder.user_id,\n      chat_id: reminder.chat_id,\n      task_text: reminder.task_text,\n      send_success: success,\n      send_error: success ? null : JSON.stringify(send.error || send.description || 'unknown_error')\n    }\n  };\n});",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "process_send_result",
+      "name": "Process Send Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE reminders\nSET is_done = TRUE,\n    delivered_at = NOW()\nWHERE id = $1\n  AND $2::BOOLEAN = TRUE\nRETURNING *;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [ Number($json.reminder_id || 0), $json.send_success === true ] }}"
+        }
+      },
+      "id": "mark_reminder_done",
+      "name": "Mark Reminder Delivered",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1300,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO unsent_telegram_messages (\n    chat_id, route, response_text, error\n)\nSELECT $1::BIGINT, 'reminder_delivery', $2::TEXT, NULLIF($3, '')::TEXT\nWHERE $4::BOOLEAN = FALSE\nRETURNING id;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [ Number($json.chat_id || 0), '🔔 Напоминание: ' + String($json.task_text || ''), String($json.send_error || ''), $json.send_success === true ] }}"
+        }
+      },
+      "id": "log_delivery_error",
+      "name": "Log Delivery Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1300,
+        120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gzx4XHPlKqlB1guL",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    }
+  ],
+  "connections": {
+    "Reminder Delivery Cron": {
+      "main": [
+        [
+          {
+            "node": "Load Due Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Due Reminders": {
+      "main": [
+        [
+          {
+            "node": "Filter & Prepare Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter & Prepare Messages": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Reminder": {
+      "main": [
+        [
+          {
+            "node": "Process Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Send Result": {
+      "main": [
+        [
+          {
+            "node": "Mark Reminder Delivered",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Delivery Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Qyzylorda"
+  }
+}

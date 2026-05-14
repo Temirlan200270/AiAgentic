@@ -1,0 +1,131 @@
+{
+  "name": "Personal AI Assistant Global Error",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error_trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function walk(value, visit, seen = new Set()) {\n  if (value === null || value === undefined) return;\n  if (typeof value !== 'object') return;\n  if (seen.has(value)) return;\n  seen.add(value);\n  if (Array.isArray(value)) {\n    for (const item of value) walk(item, visit, seen);\n    return;\n  }\n  for (const [key, child] of Object.entries(value)) {\n    visit(key, child, value);\n    walk(child, visit, seen);\n  }\n}\n\nconst payload = items[0]?.json || {};\nlet chatId = null;\nlet placeholderMessageId = null;\nlet route = '';\nlet userMessage = '';\nlet errorText = '';\nlet failedNode = '';\n\nwalk(payload, (key, child, parent) => {\n  if (chatId === null && key === 'chat_id') {\n    const asNumber = Number(child);\n    if (Number.isFinite(asNumber) && asNumber > 0) chatId = asNumber;\n  }\n  if (placeholderMessageId === null && key === 'placeholder_message_id') {\n    const asNumber = Number(child);\n    if (Number.isFinite(asNumber) && asNumber > 0) placeholderMessageId = asNumber;\n  }\n  if (!route && key === 'route' && typeof child === 'string') {\n    route = child;\n  }\n  if (!userMessage && key === 'user_message' && typeof child === 'string') {\n    userMessage = child;\n  }\n  if (!failedNode && key === 'name' && parent && typeof parent.type === 'string') {\n    failedNode = String(child);\n  }\n  if (!errorText && key === 'message' && parent && (parent.name === 'NodeApiError' || parent.name === 'ExecutionError')) {\n    errorText = String(child);\n  }\n});\n\nconst summary = errorText || String(payload.execution?.error?.message || payload.error?.message || 'workflow_error');\nconst normalized = summary.toLowerCase();\nconst isPollingConflict = normalized.includes('terminated by other getupdates request') || normalized.includes('conflict: terminated by other getupdates request');\nconst shouldNotify = Number.isFinite(Number(chatId)) && Number(chatId) > 0 && !isPollingConflict;\nconst text = 'Извини, я временно потерял связь со своими инструментами. Попробуй через минуту.';\n\nreturn [{\n  json: {\n    ...payload,\n    chat_id: chatId,\n    placeholder_message_id: placeholderMessageId,\n    route: route || 'error_handler',\n    user_message: userMessage || '',\n    failed_node: failedNode || null,\n    error_summary: summary,\n    should_notify: shouldNotify,\n    assistant_reply: text,\n    telegram_error_method: placeholderMessageId ? 'editMessageText' : 'sendMessage',\n  },\n}];"
+      },
+      "id": "build_error_message",
+      "name": "Build Error Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "should-notify",
+              "leftValue": "={{ $json.should_notify }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has_chat_id",
+      "name": "Has Chat Id",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + $env.TELEGRAM_BOT_TOKEN + '/' + ($json.placeholder_message_id ? 'editMessageText' : 'sendMessage') }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "jsonBody": "={{ $json.placeholder_message_id ? { chat_id: $json.chat_id, message_id: $json.placeholder_message_id, text: $json.assistant_reply, parse_mode: 'HTML' } : { chat_id: $json.chat_id, text: $json.assistant_reply, parse_mode: 'HTML' } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "telegram_send_error",
+      "name": "Telegram Send Error Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        780,
+        -80
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Message": {
+      "main": [
+        [
+          {
+            "node": "Has Chat Id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Chat Id": {
+      "main": [
+        [
+          {
+            "node": "Telegram Send Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Qyzylorda"
+  }
+}
